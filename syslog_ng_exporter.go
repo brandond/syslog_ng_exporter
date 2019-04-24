@@ -1,10 +1,9 @@
 package main
 
 import (
-	"bytes"
+	"bufio"
 	"flag"
 	"fmt"
-	"io"
 	"net"
 	"net/http"
 	"os"
@@ -19,7 +18,7 @@ import (
 )
 
 const (
-	namespace = "syslog-ng" // For Prometheus metrics.
+	namespace = "syslog_ng" // For Prometheus metrics.
 )
 
 var (
@@ -122,36 +121,43 @@ func (e *Exporter) collect(ch chan<- prometheus.Metric) error {
 
 	defer conn.Close()
 
-	_, err = conn.Write([]byte("STATS\n\n\n"))
+	_, err = conn.Write([]byte("STATS\n"))
 	if err != nil {
 		ch <- prometheus.MustNewConstMetric(e.up, prometheus.GaugeValue, 0)
 		return fmt.Errorf("Error writing to syslog-ng: %v", err)
 	}
 
-	var buff bytes.Buffer
-	_, err = io.Copy(&buff, conn)
-	if err != nil {
-		ch <- prometheus.MustNewConstMetric(e.up, prometheus.GaugeValue, 0)
-		return fmt.Errorf("Error reading from syslog-ng: %v", err)
-	}
-
 	ch <- prometheus.MustNewConstMetric(e.up, prometheus.GaugeValue, 1)
+	buff := bufio.NewReader(conn)
 
 	for {
 		line, err := buff.ReadString('\n')
-		if err != nil {
+
+		if err != nil || line[0] == '.' {
+			log.Debug("Reached end of buffer")
 			break
 		}
 
-		part := strings.SplitN(line, ";", 6)
-		val, err := strconv.ParseFloat(part[5], 64)
+		part := strings.SplitN(strings.TrimSpace(line), ";", 6)
+		if len(part) < 6 {
+			log.Debugf("STATS line does not have enough values: %s", line)
+			continue
+		}
 
-		if err != nil || len(part[0]) < 4 {
+		if len(part[0]) < 4 {
+			log.Debugf("STATS line has invalid name: %s", part[0])
+			continue
+		}
+
+		val, err := strconv.ParseFloat(part[5], 64)
+		if err != nil {
+			log.Debugf("STATS line has invalid value %s: %v", part[5], err)
 			continue
 		}
 
 		stat := Stat{part[0], part[1], part[2], part[3], part[4], val}
 
+		log.Debugf("Processing STATS line with name=%s metric=%s", stat.name, stat.metric)
 		switch stat.name[0:4] {
 		case "src.":
 			switch stat.metric {
@@ -170,6 +176,11 @@ func (e *Exporter) collect(ch chan<- prometheus.Metric) error {
 			}
 		}
 	}
+
+	e.srcProcessed.Collect(ch)
+	e.dstDropped.Collect(ch)
+	e.dstProcessed.Collect(ch)
+	e.dstStored.Collect(ch)
 
 	return nil
 }
