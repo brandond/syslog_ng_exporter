@@ -2,7 +2,6 @@ package main
 
 import (
 	"bufio"
-	"flag"
 	"fmt"
 	"net"
 	"net/http"
@@ -10,11 +9,13 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/prometheus/common/log"
 	"github.com/prometheus/common/version"
+	"gopkg.in/alecthomas/kingpin.v2"
 )
 
 const (
@@ -22,39 +23,60 @@ const (
 )
 
 var (
-	listeningAddress = flag.String("telemetry.address", ":9577", "Address on which to expose metrics.")
-	metricsEndpoint  = flag.String("telemetry.endpoint", "/metrics", "Path under which to expose metrics.")
-	socketPath       = flag.String("socket_path", "/var/lib/syslog-ng/syslog-ng.ctl", "Path to syslog-ng control socket.")
-	showVersion      = flag.Bool("version", false, "Print version information.")
+	app              = kingpin.New("syslog_ng_exporter", "A Syslog-NG exporter for Prometheus")
+	showVersion      = app.Flag("version", "Print version information.").Bool()
+	listeningAddress = app.Flag("telemetry.address", "Address on which to expose metrics.").Default(":9577").String()
+	metricsEndpoint  = app.Flag("telemetry.endpoint", "Path under which to expose metrics.").Default("/metrics").String()
+	socketPath       = app.Flag("socket.path", "Path to syslog-ng control socket.").Default("/var/lib/syslog-ng/syslog-ng.ctl").String()
 )
 
 type Exporter struct {
 	sockPath string
 	mutex    sync.Mutex
 
+	srcProcessed   *prometheus.Desc
+	dstProcessed   *prometheus.Desc
+	dstDropped     *prometheus.Desc
+	dstStored      *prometheus.Desc
 	up             *prometheus.Desc
 	scrapeFailures prometheus.Counter
-	srcProcessed   *prometheus.GaugeVec
-	dstProcessed   *prometheus.GaugeVec
-	dstDropped     *prometheus.GaugeVec
-	dstStored      *prometheus.GaugeVec
 }
 
 type Stat struct {
-	name     string
-	id       string
-	instance string
-	state    string
-	metric   string
-	value    float64
+	objectType string
+	id         string
+	instance   string
+	state      string
+	metric     string
+	value      float64
 }
 
 func NewExporter(path string) *Exporter {
 	return &Exporter{
 		sockPath: path,
+		srcProcessed: prometheus.NewDesc(
+			prometheus.BuildFQName(namespace, "source_messages_processed", "total"),
+			"Number of messages processed by this source.",
+			[]string{"type", "id", "source"},
+			nil),
+		dstProcessed: prometheus.NewDesc(
+			prometheus.BuildFQName(namespace, "destination_messages_processed", "total"),
+			"Number of messages processed by this destination.",
+			[]string{"type", "id", "destination"},
+			nil),
+		dstDropped: prometheus.NewDesc(
+			prometheus.BuildFQName(namespace, "destination_messages_dropped", "total"),
+			"Number of messages dropped by this destination.",
+			[]string{"type", "id", "destination"},
+			nil),
+		dstStored: prometheus.NewDesc(
+			prometheus.BuildFQName(namespace, "destination_messages_stored", "total"),
+			"Number of messages stored by this destination.",
+			[]string{"type", "id", "destination"},
+			nil),
 		up: prometheus.NewDesc(
 			prometheus.BuildFQName(namespace, "", "up"),
-			"Could the syslog-ng server be reached.",
+			"Reads 1 if the syslog-ng server could be reached, else 0.",
 			nil,
 			nil),
 		scrapeFailures: prometheus.NewCounter(prometheus.CounterOpts{
@@ -62,44 +84,16 @@ func NewExporter(path string) *Exporter {
 			Name:      "exporter_scrape_failures_total",
 			Help:      "Number of errors while scraping syslog-ng.",
 		}),
-		srcProcessed: prometheus.NewGaugeVec(prometheus.GaugeOpts{
-			Namespace: namespace,
-			Name:      "source_messages_processed_total",
-			Help:      "Number of messages processed by this source.",
-		},
-			[]string{"name", "id", "instance"},
-		),
-		dstProcessed: prometheus.NewGaugeVec(prometheus.GaugeOpts{
-			Namespace: namespace,
-			Name:      "destination_messages_processed_total",
-			Help:      "Number of messages processed by this destination.",
-		},
-			[]string{"name", "id", "instance"},
-		),
-		dstDropped: prometheus.NewGaugeVec(prometheus.GaugeOpts{
-			Namespace: namespace,
-			Name:      "destination_messages_dropped_total",
-			Help:      "Number of messages dropped by this destination.",
-		},
-			[]string{"name", "id", "instance"},
-		),
-		dstStored: prometheus.NewGaugeVec(prometheus.GaugeOpts{
-			Namespace: namespace,
-			Name:      "destination_messages_stored_total",
-			Help:      "Number of messages stored by this destination.",
-		},
-			[]string{"name", "id", "instance"},
-		),
 	}
 }
 
 func (e *Exporter) Describe(ch chan<- *prometheus.Desc) {
+	ch <- e.srcProcessed
+	ch <- e.dstProcessed
+	ch <- e.dstDropped
+	ch <- e.dstStored
 	ch <- e.up
 	e.scrapeFailures.Describe(ch)
-	e.srcProcessed.Describe(ch)
-	e.dstProcessed.Describe(ch)
-	e.dstDropped.Describe(ch)
-	e.dstStored.Describe(ch)
 }
 
 func (e *Exporter) Collect(ch chan<- prometheus.Metric) {
@@ -121,72 +115,91 @@ func (e *Exporter) collect(ch chan<- prometheus.Metric) error {
 
 	defer conn.Close()
 
+	err = conn.SetDeadline(time.Now().Add(time.Second))
+	if err != nil {
+		return fmt.Errorf("Failed to set conn deadline: %v", err)
+	}
+
 	_, err = conn.Write([]byte("STATS\n"))
 	if err != nil {
 		ch <- prometheus.MustNewConstMetric(e.up, prometheus.GaugeValue, 0)
-		return fmt.Errorf("Error writing to syslog-ng: %v", err)
+		return fmt.Errorf("Error writing to control socket: %v", err)
+	}
+
+	buff := bufio.NewReader(conn)
+
+	_, err = buff.ReadString('\n')
+	if err != nil {
+		return fmt.Errorf("Error reading header from control socket: %v", err)
 	}
 
 	ch <- prometheus.MustNewConstMetric(e.up, prometheus.GaugeValue, 1)
-	buff := bufio.NewReader(conn)
 
 	for {
 		line, err := buff.ReadString('\n')
 
 		if err != nil || line[0] == '.' {
-			log.Debug("Reached end of buffer")
+			log.Debug("Reached end of STATS output")
 			break
 		}
 
-		part := strings.SplitN(strings.TrimSpace(line), ";", 6)
-		if len(part) < 6 {
-			log.Debugf("STATS line does not have enough values: %s", line)
-			continue
-		}
-
-		if len(part[0]) < 4 {
-			log.Debugf("STATS line has invalid name: %s", part[0])
-			continue
-		}
-
-		val, err := strconv.ParseFloat(part[5], 64)
+		stat, err := parseStatLine(line)
 		if err != nil {
-			log.Debugf("STATS line has invalid value %s: %v", part[5], err)
+			log.Debugf("Skipping STATS line: %v", err)
 			continue
 		}
 
-		stat := Stat{part[0], part[1], part[2], part[3], part[4], val}
+		log.Debugf("Successfully parsed STATS line: %v", stat)
 
-		log.Debugf("Processing STATS line with name=%s metric=%s", stat.name, stat.metric)
-		switch stat.name[0:4] {
+		switch stat.objectType[0:4] {
 		case "src.":
 			switch stat.metric {
 			case "processed":
-				e.srcProcessed.WithLabelValues(stat.name, stat.id, stat.instance).Set(stat.value)
+				ch <- prometheus.MustNewConstMetric(e.srcProcessed, prometheus.CounterValue,
+					stat.value, stat.objectType, stat.id, stat.instance)
 			}
 
 		case "dst.":
 			switch stat.metric {
 			case "dropped":
-				e.dstDropped.WithLabelValues(stat.name, stat.id, stat.instance).Set(stat.value)
+				ch <- prometheus.MustNewConstMetric(e.dstDropped, prometheus.CounterValue,
+					stat.value, stat.objectType, stat.id, stat.instance)
 			case "processed":
-				e.dstProcessed.WithLabelValues(stat.name, stat.id, stat.instance).Set(stat.value)
+				ch <- prometheus.MustNewConstMetric(e.dstProcessed, prometheus.CounterValue,
+					stat.value, stat.objectType, stat.id, stat.instance)
 			case "stored":
-				e.dstStored.WithLabelValues(stat.name, stat.id, stat.instance).Set(stat.value)
+				ch <- prometheus.MustNewConstMetric(e.dstStored, prometheus.GaugeValue,
+					stat.value, stat.objectType, stat.id, stat.instance)
 			}
 		}
 	}
 
-	e.srcProcessed.Collect(ch)
-	e.dstDropped.Collect(ch)
-	e.dstProcessed.Collect(ch)
-	e.dstStored.Collect(ch)
-
 	return nil
 }
 
+func parseStatLine(line string) (Stat, error) {
+	part := strings.SplitN(strings.TrimSpace(line), ";", 6)
+	if len(part) < 6 {
+		return Stat{}, fmt.Errorf("insufficient parts: %d < 6", len(part))
+	}
+
+	if len(part[0]) < 4 {
+		return Stat{}, fmt.Errorf("invalid name: %s", part[0])
+	}
+
+	val, err := strconv.ParseFloat(part[5], 64)
+	if err != nil {
+		return Stat{}, err
+	}
+
+	stat := Stat{part[0], part[1], part[2], part[3], part[4], val}
+
+	return stat, nil
+}
+
 func main() {
-	flag.Parse()
+	log.AddFlags(app)
+	kingpin.MustParse(app.Parse(os.Args[1:]))
 
 	if *showVersion {
 		fmt.Fprintln(os.Stdout, version.Print("syslog_ng_exporter"))

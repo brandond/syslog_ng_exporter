@@ -1,6 +1,6 @@
 FROM quay.io/prometheus/busybox:latest
 
-COPY apache_exporter /bin/apache_exporter
+COPY syslog_ng_exporter /bin/syslog_ng_exporter
 
-ENTRYPOINT ["/bin/apache_exporter"]
-EXPOSE     9117
+ENTRYPOINT ["/bin/syslog_ng_exporter"]
+EXPOSE     9577
