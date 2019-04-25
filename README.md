@@ -16,7 +16,7 @@ Help on flags:
   --log.format="logger:stderr"  Set the log target and format. Example: "logger:syslog?appname=bob&local=7" or "logger:stdout?json=true"
 ```
 
-Tested with syslog-ng 3.5.6
+Tested with syslog-ng 3.5.6 and 3.20.1
 
 
 # Using Docker

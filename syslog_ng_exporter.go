@@ -38,6 +38,8 @@ type Exporter struct {
 	dstProcessed   *prometheus.Desc
 	dstDropped     *prometheus.Desc
 	dstStored      *prometheus.Desc
+	dstWritten     *prometheus.Desc
+	dstMemory      *prometheus.Desc
 	up             *prometheus.Desc
 	scrapeFailures prometheus.Counter
 }
@@ -66,12 +68,22 @@ func NewExporter(path string) *Exporter {
 			nil),
 		dstDropped: prometheus.NewDesc(
 			prometheus.BuildFQName(namespace, "destination_messages_dropped", "total"),
-			"Number of messages dropped by this destination.",
+			"Number of messages dropped by this destination due to store overflow.",
 			[]string{"type", "id", "destination"},
 			nil),
 		dstStored: prometheus.NewDesc(
 			prometheus.BuildFQName(namespace, "destination_messages_stored", "total"),
-			"Number of messages stored by this destination.",
+			"Number of messages currently stored for this destination.",
+			[]string{"type", "id", "destination"},
+			nil),
+		dstWritten: prometheus.NewDesc(
+			prometheus.BuildFQName(namespace, "destination_messages_written", "total"),
+			"Number of messages successfully written by this destination.",
+			[]string{"type", "id", "destination"},
+			nil),
+		dstMemory: prometheus.NewDesc(
+			prometheus.BuildFQName(namespace, "destination_bytes_stored", "total"),
+			"Bytes of memory currently used to store messages for this destination.",
 			[]string{"type", "id", "destination"},
 			nil),
 		up: prometheus.NewDesc(
@@ -92,6 +104,8 @@ func (e *Exporter) Describe(ch chan<- *prometheus.Desc) {
 	ch <- e.dstProcessed
 	ch <- e.dstDropped
 	ch <- e.dstStored
+	ch <- e.dstWritten
+	ch <- e.dstMemory
 	ch <- e.up
 	e.scrapeFailures.Describe(ch)
 }
@@ -167,8 +181,14 @@ func (e *Exporter) collect(ch chan<- prometheus.Metric) error {
 			case "processed":
 				ch <- prometheus.MustNewConstMetric(e.dstProcessed, prometheus.CounterValue,
 					stat.value, stat.objectType, stat.id, stat.instance)
-			case "stored":
+			case "written":
+				ch <- prometheus.MustNewConstMetric(e.dstWritten, prometheus.CounterValue,
+					stat.value, stat.objectType, stat.id, stat.instance)
+			case "stored", "queued":
 				ch <- prometheus.MustNewConstMetric(e.dstStored, prometheus.GaugeValue,
+					stat.value, stat.objectType, stat.id, stat.instance)
+			case "memory_usage":
+				ch <- prometheus.MustNewConstMetric(e.dstMemory, prometheus.GaugeValue,
 					stat.value, stat.objectType, stat.id, stat.instance)
 			}
 		}
