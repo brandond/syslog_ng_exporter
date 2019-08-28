@@ -18,29 +18,14 @@ Help on flags:
 
 Tested with syslog-ng 3.5.6, 3.20.1, and 3.22.1
 
-# Using Docker
+# Running
 
-## Build the compatible binary
-To make sure that exporter binary created by build job is suitable to run on busybox environment, generate the binary using Makefile definition. Inside project directory run:
-```
-make
-```
-*Please be aware that binary generated using `go get` or `go build` with defaults may not work in busybox/alpine base images.*
-
-## Build image
-
-Run the following commands from the project root directory.
-
-```
-docker build -t syslog_ng_exporter .
-```
-
-## Run
+## Using Docker
 ```
 docker run -d -p 9577:9577 -v /var/lib/syslog-ng/syslog-ng.ctl:/syslog-ng.ctl \
-  syslog_ng_exporter --socket.path=/syslog-ng.ctl
-
+  brandond/syslog_ng_exporter --socket.path=/syslog-ng.ctl
 ```
+
 
 # Details
 
