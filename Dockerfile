@@ -1,7 +1,7 @@
 FROM golang:alpine AS builder
-WORKDIR /go/src/github.com/brandond/syslog_ng_exporter
-COPY *.go Makefile vendor /go/src/github.com/brandond/syslog_ng_exporter/
-RUN apk --no-cache add curl git make
+RUN apk --no-cache add alpine-sdk
+COPY ./ /go/src/github.com/brandond/syslog_ng_exporter/
+WORKDIR /go/src/github.com/brandond/syslog_ng_exporter/
 RUN make
 
 FROM quay.io/prometheus/busybox:latest
