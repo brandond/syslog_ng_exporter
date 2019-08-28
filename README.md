@@ -16,8 +16,7 @@ Help on flags:
   --log.format="logger:stderr"  Set the log target and format. Example: "logger:syslog?appname=bob&local=7" or "logger:stdout?json=true"
 ```
 
-Tested with syslog-ng 3.5.6 and 3.20.1
-
+Tested with syslog-ng 3.5.6, 3.20.1, and 3.22.1
 
 # Using Docker
 
@@ -33,16 +32,17 @@ make
 Run the following commands from the project root directory.
 
 ```
-docker build -t apache_exporter .
+docker build -t syslog_ng_exporter .
 ```
 
 ## Run
-
 ```
 docker run -d -p 9577:9577 -v /var/lib/syslog-ng/syslog-ng.ctl:/syslog-ng.ctl \
   syslog_ng_exporter --socket.path=/syslog-ng.ctl
 
 ```
+
+# Details
 
 ## Collectors
 
