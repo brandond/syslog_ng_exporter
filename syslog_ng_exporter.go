@@ -173,6 +173,13 @@ func (e *Exporter) collect(ch chan<- prometheus.Metric) error {
 					stat.value, stat.objectType, stat.id, stat.instance)
 			}
 
+		case "sour":
+			switch stat.metric {
+			case "processed":
+				ch <- prometheus.MustNewConstMetric(e.srcProcessed, prometheus.CounterValue,
+					stat.value, stat.objectType, stat.id, stat.instance)
+			}
+
 		case "dst.":
 			switch stat.metric {
 			case "dropped":
