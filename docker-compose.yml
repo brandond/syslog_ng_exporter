@@ -1,0 +1,11 @@
+version: '3'
+
+services:
+  syslog_ng_exporter:
+    image: brandond/syslog_ng_exporter:latest
+    restart: unless-stopped
+    ports:
+      - "9577:9577"
+    volumes:
+      - /var/lib/syslog-ng/syslog-ng.ctl:/syslog-ng.ctl
+    command: --socket.path=/syslog-ng.ctl
