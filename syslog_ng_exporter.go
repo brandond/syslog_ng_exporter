@@ -2,13 +2,16 @@ package main
 
 import (
 	"bufio"
+	"crypto/tls"
 	"fmt"
 	"net"
 	"net/http"
 	"os"
+	"os/signal"
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
@@ -28,11 +31,14 @@ var (
 	listeningAddress = app.Flag("telemetry.address", "Address on which to expose metrics.").Default(":9577").String()
 	metricsEndpoint  = app.Flag("telemetry.endpoint", "Path under which to expose metrics.").Default("/metrics").String()
 	socketPath       = app.Flag("socket.path", "Path to syslog-ng control socket.").Default("/var/lib/syslog-ng/syslog-ng.ctl").String()
+	insecure         = kingpin.Flag("insecure", "Ignore server certificate if using https.").Bool() // add insecure for non https
+	gracefulStop     = make(chan os.Signal)                                                         // gracefully stop the system
 )
 
 type Exporter struct {
 	sockPath string
 	mutex    sync.Mutex
+	client   *http.Client
 
 	srcProcessed   *prometheus.Desc
 	dstProcessed   *prometheus.Desc
@@ -42,6 +48,22 @@ type Exporter struct {
 	dstMemory      *prometheus.Desc
 	up             *prometheus.Desc
 	scrapeFailures prometheus.Counter
+}
+
+type result struct {
+	id          int64
+	moduleName  string
+	target      string
+	debugOutput string
+	success     bool
+}
+
+type resultHistory struct {
+	mu                     sync.Mutex
+	nextId                 int64
+	results                []*result
+	preservedFailedResults []*result
+	maxResults             uint
 }
 
 type Stat struct {
@@ -96,6 +118,11 @@ func NewExporter(path string) *Exporter {
 			Name:      "exporter_scrape_failures_total",
 			Help:      "Number of errors while scraping syslog-ng.",
 		}),
+		client: &http.Client{
+			Transport: &http.Transport{
+				TLSClientConfig: &tls.Config{InsecureSkipVerify: *insecure},
+			},
+		},
 	}
 }
 
@@ -221,6 +248,16 @@ func main() {
 	log.AddFlags(app)
 	kingpin.MustParse(app.Parse(os.Args[1:]))
 
+	log.Infoln("Starting syslog_ng_exporter", version.Info())
+	log.Infoln("Build context", version.BuildContext())
+	log.Infof("Starting server: %s", *listeningAddress)
+
+	// listen to termination signals from the OS
+	signal.Notify(gracefulStop, syscall.SIGTERM)
+	signal.Notify(gracefulStop, syscall.SIGINT)
+	signal.Notify(gracefulStop, syscall.SIGHUP)
+	signal.Notify(gracefulStop, syscall.SIGQUIT)
+
 	if *showVersion {
 		fmt.Fprintln(os.Stdout, version.Print("syslog_ng_exporter"))
 		os.Exit(0)
@@ -230,9 +267,14 @@ func main() {
 	prometheus.MustRegister(exporter)
 	prometheus.MustRegister(version.NewCollector("syslog_ng_exporter"))
 
-	log.Infoln("Starting syslog_ng_exporter", version.Info())
-	log.Infoln("Build context", version.BuildContext())
-	log.Infof("Starting server: %s", *listeningAddress)
+	go func() {
+		log.Infof("listening and start terminating")
+		sig := <-gracefulStop
+		log.Infof("caught sig: %+v. Wait 2 seconds...", sig)
+		time.Sleep(2 * time.Second)
+		log.Infof("Terminated syslog_ng on port: %s", *listeningAddress)
+		os.Exit(0)
+	}()
 
 	http.Handle(*metricsEndpoint, promhttp.Handler())
 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
@@ -247,5 +289,33 @@ func main() {
 			log.Warnf("Failed sending response: %v", err)
 		}
 	})
+
 	log.Fatal(http.ListenAndServe(*listeningAddress, nil))
+}
+
+// List all result history
+func (rh *resultHistory) List() []*result {
+	rh.mu.Lock()
+	defer rh.mu.Unlock()
+
+	return append(rh.preservedFailedResults[:], rh.results...)
+}
+
+// Get get the returns of the given result
+func (rh *resultHistory) Get(id int64) *result {
+	rh.mu.Lock()
+	defer rh.mu.Unlock()
+
+	for _, r := range rh.preservedFailedResults {
+		if r.id == id {
+			return r
+		}
+	}
+	for _, r := range rh.results {
+		if r.id == id {
+			return r
+		}
+	}
+
+	return nil
 }
