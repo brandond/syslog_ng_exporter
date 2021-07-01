@@ -267,15 +267,6 @@ func main() {
 	prometheus.MustRegister(exporter)
 	prometheus.MustRegister(version.NewCollector("syslog_ng_exporter"))
 
-	go func() {
-		log.Infof("listening and start terminating")
-		sig := <-gracefulStop
-		log.Infof("caught sig: %+v. Wait 2 seconds...", sig)
-		time.Sleep(2 * time.Second)
-		log.Infof("Terminated syslog_ng on port: %s", *listeningAddress)
-		os.Exit(0)
-	}()
-
 	http.Handle(*metricsEndpoint, promhttp.Handler())
 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		_, err := w.Write([]byte(`<html>
@@ -291,31 +282,4 @@ func main() {
 	})
 
 	log.Fatal(http.ListenAndServe(*listeningAddress, nil))
-}
-
-// List all result history
-func (rh *resultHistory) List() []*result {
-	rh.mu.Lock()
-	defer rh.mu.Unlock()
-
-	return append(rh.preservedFailedResults[:], rh.results...)
-}
-
-// Get get the returns of the given result
-func (rh *resultHistory) Get(id int64) *result {
-	rh.mu.Lock()
-	defer rh.mu.Unlock()
-
-	for _, r := range rh.preservedFailedResults {
-		if r.id == id {
-			return r
-		}
-	}
-	for _, r := range rh.results {
-		if r.id == id {
-			return r
-		}
-	}
-
-	return nil
 }
