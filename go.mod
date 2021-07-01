@@ -1,4 +1,4 @@
-module github.com/brandond/syslog_ng_exporter
+module github.com/yabetsu93/syslog_ng_exporter
 
 go 1.16
 
