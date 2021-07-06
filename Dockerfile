@@ -1,12 +1,17 @@
 FROM golang:alpine AS builder
+LABEL maintainer="Jabes Pauya <jabpau93@gmail.com>"
+
 RUN apk --no-cache upgrade
 RUN apk --no-cache add alpine-sdk
-COPY ./ /go/src/github.com/yabetsu93/syslog_ng_exporter/
-WORKDIR /go/src/github.com/yabetsu93/syslog_ng_exporter/
-RUN make
 
-FROM quay.io/prometheus/busybox:latest
-LABEL maintainer="Brad Davidson <brad@oatmail.org>"
-COPY --from=builder /go/src/github.com/yabetsu93/syslog_ng_exporter/syslog_ng_exporter /bin/syslog_ng_exporter
+ENV GO1111MODULE=on
+
+WORKDIR /syslog_ng_exporter
+
+COPY . .
+
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build
+
+EXPOSE 9577
+
 ENTRYPOINT ["/bin/syslog_ng_exporter"]
-EXPOSE     9577
