@@ -12,6 +12,11 @@ COPY . .
 
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build
 
+RUN chmod +x syslog_ng_exporter
+
 EXPOSE 9577
 
-ENTRYPOINT ["/bin/syslog_ng_exporter"]
+# add the endpoint for the bin as /usr/local/bin/syslog_ng_exporter
+ENTRYPOINT ["/usr/local/bin/syslog_ng_exporter"]
+
+CMD [ "--help" ]
