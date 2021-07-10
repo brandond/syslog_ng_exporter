@@ -58,14 +58,6 @@ type result struct {
 	success     bool
 }
 
-type resultHistory struct {
-	mu                     sync.Mutex
-	nextId                 int64
-	results                []*result
-	preservedFailedResults []*result
-	maxResults             uint
-}
-
 type Stat struct {
 	objectType string
 	id         string
