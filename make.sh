@@ -49,9 +49,7 @@ for os_arch in "${os_archs[@]}"
 do
     goos=${os_arch%/*}
     goarch=${os_arch#*/}
-    printf "\t%s\n" "${goos}"
-    printf "\t%s\n" "${goarch}"
-    GOOS=${goos} GOARCH=${goarch} go build -o /dev/null syslog_ng_exporter.go >/dev/null 2>&1 
+    GOOS=${goos} GOARCH=${goarch} go build -o ./bin syslog_ng_exporter.go >/dev/null 2>&1 
     if [ $? -eq 0 ]
     then
         os_archs_64+=(${os_arch})
