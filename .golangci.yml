@@ -1,0 +1,13 @@
+run:
+  modules-download-mode: readonly
+  timeout: 1m
+
+# Run only staticcheck for now. Additional linters will be enabled one-by-one.
+linters:
+  enable:
+  - staticcheck
+  - gofmt
+  - goimports
+  - golint
+  - unused
+  disable-all: true

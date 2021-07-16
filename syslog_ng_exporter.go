@@ -7,11 +7,9 @@ import (
 	"net"
 	"net/http"
 	"os"
-	"os/signal"
 	"strconv"
 	"strings"
 	"sync"
-	"syscall"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
@@ -46,16 +44,10 @@ type Exporter struct {
 	dstStored      *prometheus.Desc
 	dstWritten     *prometheus.Desc
 	dstMemory      *prometheus.Desc
+	dstCPU         *prometheus.Desc
 	up             *prometheus.Desc
+	scrapeSuccess  prometheus.Counter
 	scrapeFailures prometheus.Counter
-}
-
-type result struct {
-	id          int64
-	moduleName  string
-	target      string
-	debugOutput string
-	success     bool
 }
 
 type Stat struct {
@@ -100,6 +92,11 @@ func NewExporter(path string) *Exporter {
 			"Bytes of memory currently used to store messages for this destination.",
 			[]string{"type", "id", "destination"},
 			nil),
+		dstCPU: prometheus.NewDesc(
+			prometheus.BuildFQName(namespace, "destination_bytes_processed", "total"),
+			"Bytes of cpu currently used to process messages for this destination.",
+			[]string{"type", "id", "destination"},
+			nil),
 		up: prometheus.NewDesc(
 			prometheus.BuildFQName(namespace, "", "up"),
 			"Reads 1 if the syslog-ng server could be reached, else 0.",
@@ -109,6 +106,11 @@ func NewExporter(path string) *Exporter {
 			Namespace: namespace,
 			Name:      "exporter_scrape_failures_total",
 			Help:      "Number of errors while scraping syslog-ng.",
+		}),
+		scrapeSuccess: prometheus.NewCounter(prometheus.CounterOpts{
+			Namespace: namespace,
+			Name:      "exporter_scrape_success_total",
+			Help:      "Number of successfully scrape metrics for syslog-ng.",
 		}),
 		client: &http.Client{
 			Transport: &http.Transport{
@@ -125,8 +127,10 @@ func (e *Exporter) Describe(ch chan<- *prometheus.Desc) {
 	ch <- e.dstStored
 	ch <- e.dstWritten
 	ch <- e.dstMemory
+	ch <- e.dstCPU
 	ch <- e.up
 	e.scrapeFailures.Describe(ch)
+	e.scrapeSuccess.Describe(ch)
 }
 
 func (e *Exporter) Collect(ch chan<- prometheus.Metric) {
@@ -137,6 +141,10 @@ func (e *Exporter) Collect(ch chan<- prometheus.Metric) {
 		e.scrapeFailures.Inc()
 		e.scrapeFailures.Collect(ch)
 	}
+
+	// collect successful metrics
+	e.scrapeSuccess.Inc()
+	e.scrapeSuccess.Collect(ch)
 }
 
 func (e *Exporter) collect(ch chan<- prometheus.Metric) error {
@@ -148,7 +156,8 @@ func (e *Exporter) collect(ch chan<- prometheus.Metric) error {
 
 	defer conn.Close()
 
-	err = conn.SetDeadline(time.Now().Add(time.Second))
+	// set 30s connection deadline
+	err = conn.SetDeadline(time.Now().Add(30 * time.Second))
 	if err != nil {
 		return fmt.Errorf("Failed to set conn deadline: %v", err)
 	}
@@ -209,6 +218,9 @@ func (e *Exporter) collect(ch chan<- prometheus.Metric) error {
 			case "memory_usage":
 				ch <- prometheus.MustNewConstMetric(e.dstMemory, prometheus.GaugeValue,
 					stat.value, stat.objectType, stat.id, stat.instance)
+			case "cpu_usage":
+				ch <- prometheus.MustNewConstMetric(e.dstMemory, prometheus.GaugeValue,
+					stat.value, stat.objectType, stat.id, stat.instance)
 			}
 		}
 	}
@@ -217,8 +229,9 @@ func (e *Exporter) collect(ch chan<- prometheus.Metric) error {
 }
 
 func parseStatLine(line string) (Stat, error) {
-	part := strings.SplitN(strings.TrimSpace(line), ";", 6)
-	if len(part) < 6 {
+	statlen := 7
+	part := strings.SplitN(strings.TrimSpace(line), ";", statlen)
+	if len(part) < statlen {
 		return Stat{}, fmt.Errorf("insufficient parts: %d < 6", len(part))
 	}
 
@@ -243,12 +256,6 @@ func main() {
 	log.Infoln("Starting syslog_ng_exporter", version.Info())
 	log.Infoln("Build context", version.BuildContext())
 	log.Infof("Starting server: %s", *listeningAddress)
-
-	// listen to termination signals from the OS
-	signal.Notify(gracefulStop, syscall.SIGTERM)
-	signal.Notify(gracefulStop, syscall.SIGINT)
-	signal.Notify(gracefulStop, syscall.SIGHUP)
-	signal.Notify(gracefulStop, syscall.SIGQUIT)
 
 	if *showVersion {
 		fmt.Fprintln(os.Stdout, version.Print("syslog_ng_exporter"))
