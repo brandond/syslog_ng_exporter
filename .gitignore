@@ -1,3 +1,4 @@
 # ignore any @ starting file
-/@.*
-/vendor
+@.*
+vendor
+@test
