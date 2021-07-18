@@ -23,9 +23,28 @@ Tested with syslog-ng 3.5.6, 3.20.1, and 3.22.1
 ## Using Docker
 ```
 docker run -d -p 9577:9577 -v /var/lib/syslog-ng/syslog-ng.ctl:/syslog-ng.ctl \
-  brandond/syslog_ng_exporter --socket.path=/syslog-ng.ctl
+  jabes1993/syslog-ng_exporter --socket.path=/syslog-ng.ctl
 ```
 
+## Prometheus Job
+```
+ - job_name: syslog-ng_jobs
+   honor_timestamps: true
+   honor_labels: false
+   params:
+     module: []
+   scrape_interval: 20s
+   scrape_timeout: 15s
+   metrics_path: /metrics
+   scheme: http
+   tls_config:
+     insecure_skip_verify: true
+   static_configs:
+   - targets:
+     - dev-zprom105z.dev.jp.local:9577
+     labels:
+       module: syslog-ng_exporter
+```
 
 # Details
 

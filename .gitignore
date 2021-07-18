@@ -1,2 +1,4 @@
-syslog_ng_exporter
-vendor/*/
+# ignore any @ starting file
+@.*
+vendor
+@test
